@@ -192,3 +192,11 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+
+# Artefacts
+artefacts/
+artefacts/*
+
+# Test
+quicksight_migration.py
