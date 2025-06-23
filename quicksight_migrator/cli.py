@@ -34,6 +34,7 @@ from typing import List, Optional
 import boto3
 from botocore.config import Config as BotoConfig
 
+from .groups import GroupManager
 from .artefacts import Artefacts
 from .config import Account, Config as QSConfig
 from .datasets import replicate_all_datasets
@@ -56,26 +57,40 @@ def _assume_client(
     service: str,
     role_arn: str,
     session_name: str,
+    *,
     region: str,
     profile: str | None = None,
+    pre_role_arn: str | None = None,  # NOVO
 ):
-    """Devolve boto3.client configurado para a role assumida."""
-    # if profile:
-    #     sess = boto3.Session(profile_name=profile, region_name=region)
-    # else:
-    #     sess = boto3.Session(region_name=region)  # usa env/IMDS se existir
-    sess = boto3.Session(profile_name=profile, region_name=region)
+    """
+    Devolve boto3.client já autenticado na role_arn.
+    Se `pre_role_arn` for fornecido, assume essa role primeiro.
+    """
+    base = boto3.Session(profile_name=profile, region_name=region)
 
-    sts = sess.client("sts")
-    creds = sts.assume_role(RoleArn=role_arn, RoleSessionName=session_name)[
-        "Credentials"
-    ]
+    # 1º salto (opcional)
+    if pre_role_arn:
+        cred1 = base.client("sts").assume_role(
+            RoleArn=pre_role_arn, RoleSessionName=session_name + "_1"
+        )["Credentials"]
+        base = boto3.Session(
+            aws_access_key_id=cred1["AccessKeyId"],
+            aws_secret_access_key=cred1["SecretAccessKey"],
+            aws_session_token=cred1["SessionToken"],
+            region_name=region,
+        )
+
+    # 2º salto – destino final
+    cred2 = base.client("sts").assume_role(
+        RoleArn=role_arn, RoleSessionName=session_name
+    )["Credentials"]
+
     return boto3.client(
         service,
         region_name=region,
-        aws_access_key_id=creds["AccessKeyId"],
-        aws_secret_access_key=creds["SecretAccessKey"],
-        aws_session_token=creds["SessionToken"],
+        aws_access_key_id=cred2["AccessKeyId"],
+        aws_secret_access_key=cred2["SecretAccessKey"],
+        aws_session_token=cred2["SessionToken"],
     )
 
 
@@ -93,6 +108,7 @@ def create_destination_datasource(
     export_path: str | Path,
     managed_policies: Optional[List[str]] = None,
     trust_principal: Optional[str] = None,
+    group_name: Optional[str] = "Admins",
 ) -> Artefacts:
     """Cria *QS‑MigrationDest*, aplica patches e provisiona o Data Source."""
 
@@ -113,11 +129,18 @@ def create_destination_datasource(
     ServiceRolePatch(cfg).ensure()
     SecretsRolePatch(cfg).ensure()
 
+    # 0.1 – garante group
+    grp_mgr = GroupManager(cfg)
+    group_arn = grp_mgr.ensure(group_name)
+    cfg.group_arn = group_arn
+
     # Stage 1 – Data Source
     datasource_arn = DataSourceManager(cfg).ensure()
 
     artefacts = Artefacts(
-        role_arn=cfg.destination_account_id.role_arn, datasource_arn=datasource_arn
+        role_arn=cfg.destination_account_id.role_arn,
+        datasource_arn=datasource_arn,
+        group_arn=group_arn,
     )
     artefacts.save(export_path)
     log.info("Artefacts salvos em %s", export_path)
@@ -171,10 +194,11 @@ def replicate_datasets(
 
     qs_src = _assume_client(
         "quicksight",
-        source_role_arn,
-        "QSOrig",
+        role_arn=source_role_arn,  # QS-MigrationOrigin
+        pre_role_arn=arts.role_arn,  # QS-MigrationDest (salvo nos artefatos)
+        session_name="QSOrig",
         region=region,
-        profile=source_profile,
+        profile=source_profile,  # perfil local que tem acesso à conta destino
     )
     qs_dst = _boto3_client("quicksight", profile=None, region=region)
 

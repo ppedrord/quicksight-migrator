@@ -46,6 +46,7 @@ class Config:
     trust_principal: Optional[str] = None
     export_path: Optional[str] = None
     managed_policies: Optional[List[str]] = None
+    group_arn: Optional[str] = None
 
     # injectable session factory (tests)
     session_factory: Callable[[Optional[str]], "boto3.session.Session"] = field(

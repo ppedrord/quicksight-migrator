@@ -115,7 +115,7 @@ class DataSourceManager:
             "Permissions": [
                 {
                     # "Principal": self.cfg.destination.role_arn,
-                    "Principal": "arn:aws:quicksight:us-east-1:528757801159:group/default/Admins",
+                    "Principal": self.cfg.group_arn,
                     "Actions": [
                         "quicksight:UpdateDataSourcePermissions",
                         "quicksight:DescribeDataSourcePermissions",

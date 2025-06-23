@@ -26,6 +26,7 @@ class Artefacts:
 
     role_arn: str
     datasource_arn: Optional[str] = None
+    group_arn: Optional[str] = None
 
     @classmethod
     def load(cls, path: str | Path) -> "Artefacts":
