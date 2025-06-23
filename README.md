@@ -1,192 +1,115 @@
-# QuickSight Migration – Stage 0/1
+# QuickSight Migrator
 
-> Automação de **roles IAM**, patch da service role do QuickSight e provisionamento da **DataSource Aurora PostgreSQL** na conta de destino.
+[![PyPI](https://img.shields.io/pypi/v/quicksight-migrator.svg)](https://pypi.org/project/quicksight-migrator/)
 
----
-
-## Estrutura do pacote
-
-| Módulo          | Responsabilidade                                                                                                                             | Classes / funções principais                                                    |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `config.py`     | Dataclasses centrais (`Config`, `Account`) + helpers para sessões boto3/assume-role.                                                         | `Config.client()`, `Account.role_arn`                                           |
-| `iam_roles.py`  | IAM helpers.<br>• `MigrationRole` — cria/atualiza a **QS‑MigrationDest**.<br>• `ServiceRolePatch` — injeta inline policy na service role QS. | `MigrationRole.ensure() / cleanup()`<br>`ServiceRolePatch.ensure() / cleanup()` |
-| `datasource.py` | Interage com a API do QuickSight para criar/descrever/remover a DataSource Aurora PostgreSQL.                                                | `DataSourceManager.ensure() / cleanup()`                                        |
-| `artefacts.py`  | Persistência/restore dos ARNs gerados entre os estágios.                                                                                     | `Artefacts.save()`, `Artefacts.load()`                                          |
-| `cli.py`        | Orquestração de todos os managers via argparse.                                                                                              | `main()`                                                                        |
-| `__main__.py`   | Permite rodar via `python -m quicksight_migrator ...`.                                                                                       | —                                                                               |
+Automates the setup of QuickSight roles and Data Sources across AWS accounts and helps replicate existing Direct Query datasets. The package can be used programmatically or via a small command line interface.
 
 ---
 
-## Visão geral do fluxo
+## Features
 
-```mermaid
-flowchart TD
-    subgraph Step0
-      A[MigrationRole.ensure()] -->|cria e atualiza| QSRole(QS-MigrationDest)
-      B[ServiceRolePatch.ensure()] -->|inline <GetSecretValue>| QSSvcRole(aws-quicksight-service-role-v0)
-    end
-    Step0 --> Step1
-    Step1[DataSourceManager.ensure()] -->|Cria Aurora DS| DS[QuickSight Data Source]
-```
-
-### Passos
-
-1. **Step 0** — Preparação IAM
-   a. `MigrationRole` cria/atualiza _QS‑MigrationDest_ com:
-
-   - trust policy = QuickSight + opcional ( `--trust-principal` )
-   - managed policy `AmazonQuickSightFullAccess` (ou similar)
-   - **Inline policy** restrita ao seu secret de banco (least privilege).
-     b. `ServiceRolePatch` injeta a mesma inline policy na _service role_ padrão (`aws-quicksight-service-role-v0`).
-
-2. **Step 1** — DataSource do QuickSight
-
-   - Usa o segredo passado via `--secret-arn` e parâmetros recebidos para criar a fonte Aurora PostgreSQL, caso ainda não exista.
-
-3. **Artefacts export**
-
-   - Salva em JSON (`--export-file`) os ARNs da role e DataSource criados, para uso em etapas seguintes.
-
-4. **Cleanup / rollback**
-
-   - Remove DataSource, roles e políticas inline/managed.
+* **Stage 0/1 – IAM & Data Source**
+  - Creates the temporary **QS-MigrationDest** role in the destination account.
+  - Patches the default QuickSight service roles so the service can read your Secrets Manager secret.
+  - Ensures the Secrets Manager execution role.
+  - Creates an Aurora PostgreSQL Data Source and stores the generated ARNs.
+  - Optionally ensures a QuickSight group (defaults to `Admins`).
+* **Stage 2 – Data Set replication**
+  - Copies all Direct Query Data Sets that rely on the source Data Source.
 
 ---
 
-## Principais APIs públicas
-
-### `iam_roles.MigrationRole`
-
-| Método      | Descrição                                        |
-| ----------- | ------------------------------------------------ |
-| `ensure()`  | Cria/atualiza a role (idempotente), retorna ARN  |
-| `cleanup()` | Remove policies (managed/inline) e exclui a role |
-
-### `iam_roles.ServiceRolePatch`
-
-| Método      | Descrição                              |
-| ----------- | -------------------------------------- |
-| `ensure()`  | Insere a inline policy na service role |
-| `cleanup()` | Remove a inline policy                 |
-
-### `datasource.DataSourceManager`
-
-| Método      | Descrição                                            |
-| ----------- | ---------------------------------------------------- |
-| `ensure()`  | Busca DS pelo id; se não existir, cria e retorna ARN |
-| `cleanup()` | Remove a DS, se existir                              |
-
-### `artefacts.Artefacts`
-
-| Método        | Descrição                          |
-| ------------- | ---------------------------------- |
-| `save(path)`  | Salva o JSON (indentação 2)        |
-| `load(path)`  | Lê/parseia JSON, retorna instância |
-| `update(**k)` | Helper: altera e salva             |
-
----
-
-## Exemplos de uso
-
-### 1 – Bootstrap (criação completa)
+## Installation
 
 ```bash
- python -m quicksight_migrator \
-   --region us-east-1 \
-   --destination 528757801159 \
-   --ds-id autoplan_db \
-   --secret-arn arn:aws:secretsmanager:us-east-1:528757801159:secret:AuroraV2DBCredentials-x3dXqE \
-   --vpc-arn arn:aws:quicksight:us-east-1:528757801159:vpcConnection/367359c6-ede2-4122-b295-d94dd651930c \
-   --profile quicksight-autoplan-hml \
-   --export-file artefacts_stage1.json
-
+pip install quicksight-migrator
 ```
 
-### 2 – Cleanup / rollback (remoção de tudo criado)
+The package requires Python 3.8+ and `boto3`.
 
-```bash
-python -m quicksight_migrator ... --cleanup
+---
+
+## Quickstart
+
+1. **Bootstrap destination account**
+
+   ```bash
+   quicksight-migrator ensure \
+       --region us-east-1 \
+       --destination-account-id 123456789012 \
+       --ds-id aurora_ds \
+       --secret-arn arn:aws:secretsmanager:us-east-1:123456789012:secret:MySecret \
+       --vpc-connection-arn arn:aws:quicksight:us-east-1:123456789012:vpcConnection/abc123 \
+       --export-path artefacts.json
+   ```
+
+2. **Replicate DataSets from another account**
+
+   ```bash
+   quicksight-migrator replicate-datasets \
+       --region us-east-1 \
+       --source-account-id 111111111111 \
+       --source-role-arn arn:aws:iam::111111111111:role/QS-MigrationOrigin \
+       --source-ds-arn arn:aws:quicksight:us-east-1:111111111111:datasource/xyz987 \
+       --artefacts artefacts.json
+   ```
+
+3. **Cleanup**
+
+   ```bash
+   quicksight-migrator cleanup --region us-east-1 --artefacts artefacts.json
+   ```
+
+All operations are idempotent, so running them multiple times is safe.
+
+---
+
+## Command Line Interface
+
+```
+quicksight-migrator [command] [options]
 ```
 
-> **Dica:** Você pode rodar o `--cleanup` quantas vezes quiser, ele é idempotente e silencioso para recursos já removidos.
+| Command              | Purpose                                                          |
+| -------------------- | ---------------------------------------------------------------- |
+| `ensure`             | Stage 0/1 – create roles and the Aurora Data Source.             |
+| `cleanup`            | Remove resources created during `ensure`.                        |
+| `replicate-datasets` | Stage 2 – copy Direct Query Data Sets that use the source DS ARN. |
 
-### 3 – Rodar já assumindo QS‑MigrationDest (exemplo CI/CD)
+Run `quicksight-migrator [command] --help` for the complete list of options.
 
-```bash
-python -m quicksight_migrator ... --assume-role
-```
+---
 
-> Útil para pipelines onde a role já foi provisionada e você só precisa garantir a existência do DataSource.
+## Library Usage
 
-### 4 – Consultar artefatos em outros scripts
+The CLI is a thin wrapper around three Python functions:
 
 ```python
-from quicksight_migrator.artefacts import Artefacts
-
-arts = Artefacts.load("artefacts_stage1.json")
-print(arts.role_arn, arts.datasource_arn)
+from quicksight_migrator.cli import (
+    create_destination_datasource,
+    cleanup_destination_datasource,
+    replicate_datasets,
+)
 ```
+
+Each function mirrors the parameters of the respective CLI command. Using the library directly provides finer control and is ideal for CI/CD pipelines.
 
 ---
 
-### Persistência de Artefatos
+## Typical Use Cases
 
-A opção `--export-file` (ou `--export-file`/`--import-file` para leitura) aceita **diferentes destinos**, automaticamente detectados pelo prefixo:
-
-#### **Salvar/ler localmente (diretório local)**
-
-```bash
-python -m quicksight_migrator ... --export-file ./artefacts/artefacts_stage1.json
-```
-
-- O diretório será criado automaticamente se não existir.
-
-#### **Salvar/ler no S3**
-
-```bash
-python -m quicksight_migrator ... --export-file s3://meu-bucket/autoplan/artefacts_stage1.json
-```
-
-- O script faz upload/download usando boto3.
-- O bucket e a chave precisam existir e o perfil AWS precisa ter permissão de leitura/escrita.
-
-#### **Salvar/ler no Parameter Store (SSM)**
-
-```bash
-python -m quicksight_migrator ... --export-file ssm:///app/artefacts/autoplan-stage1
-```
-
-- Armazena o JSON completo como parâmetro no SSM.
-- Para ler:
-
-  ```python
-  Artefacts.load('ssm:///app/artefacts/autoplan-stage1')
-  ```
-
-#### **Formato autodetectado**
-
-- Use prefixos: `s3://` para S3, `ssm://` para SSM Parameter Store, ou caminho local para arquivo.
-
-#### **Exemplo de uso em Python**
-
-```python
-from quicksight_migrator.artefacts import Artefacts
-
-arts = Artefacts.load('s3://meu-bucket/artefacts_stage1.json')
-print(arts.role_arn, arts.datasource_arn)
-
-arts = Artefacts.load('ssm:///app/artefacts/stage1')
-```
+* **Environment bootstrap** – Prepare a new AWS account with the required roles and Data Source for QuickSight.
+* **Cross-account migrations** – Replicate Direct Query Data Sets from a source environment to a destination account.
+* **Rollback** – Quickly remove all migration artefacts whenever needed.
 
 ---
 
-## Workflows comuns
+## Development
 
-- **Primeiro uso:**
-  Rode com todos os parâmetros obrigatórios (IAM + DS) e salve artefatos.
-- **Reexecução/Idempotência:**
-  O script não quebra se as roles/DataSource já existirem — apenas patcha o necessário.
-- **Rollback:**
-  Basta adicionar `--cleanup` à chamada para limpar _tudo_.
-- **Uso em CI/CD:**
-  Use `--assume-role` para rodar em pipelines, garantindo que o ambiente já está preparado.
+Clone the repository and install the dependencies from `requirements.txt`. The codebase is organised into small modules under `quicksight_migrator/` and is extensively type hinted.
+
+---
+
+## License
+
+This project is released under the MIT License. See the [LICENSE](LICENSE) file for details.
