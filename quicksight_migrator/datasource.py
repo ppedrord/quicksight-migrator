@@ -48,24 +48,24 @@ class DataSourceManager:
                 AwsAccountId=self.cfg.destination.account_id,
                 DataSourceId=self.cfg.datasource_id,
             )["DataSource"]["Arn"]
-            logger.info("DataSource already present → %s", self.arn)
+            logger.debug("DataSource already present → %s", self.arn)
         except ClientError as exc:  # not found → create
             if exc.response["Error"].get("Code") != "ResourceNotFoundException":
                 # raise
                 logger.error(exc)
             try:
                 secret = self._secret()
-                logger.info("Secret parsed")
+                logger.debug("Secret parsed")
             except Exception as e:
                 logger.error(e)
             try:
                 params = self._build_params(secret)
-                logger.info("DataSource params built")
+                logger.debug("DataSource params built")
             except Exception as e:
                 logger.error(e)
             try:
                 self.arn = self.qs.create_data_source(**params)["Arn"]
-                logger.info("DataSource created → %s", self.arn)
+                logger.debug("DataSource created → %s", self.arn)
             except Exception as e:
                 logger.error(e)
         return self.arn
@@ -77,7 +77,7 @@ class DataSourceManager:
                 AwsAccountId=self.cfg.destination.account_id,
                 DataSourceId=self.cfg.datasource_id,
             )
-            logger.info("DataSource %s removed", self.cfg.datasource_id)
+            logger.debug("DataSource %s removed", self.cfg.datasource_id)
         except ClientError as exc:
             if exc.response["Error"].get("Code") != "ResourceNotFoundException":
                 raise
@@ -93,7 +93,13 @@ class DataSourceManager:
 
     def _build_params(self, s: dict) -> dict:
         """Translate secret + CLI flags into *create_data_source* parameters."""
-        return {
+        # ARN QuickSight *user* da role QS-MigrationDest/qs-migration
+        qs_role_arn = (
+            f"arn:aws:quicksight:{self.cfg.region}:"
+            f"{self.cfg.destination.account_id}:user/default/"
+            f"{self.cfg.destination_account_id.role_name}/qs-migration"
+        )
+        params = {
             "AwsAccountId": self.cfg.destination.account_id,
             "DataSourceId": self.cfg.datasource_id,
             "Name": f"Aurora {s.get('dbname', 'postgres')}",
@@ -114,16 +120,27 @@ class DataSourceManager:
             "SslProperties": {"DisableSsl": False},
             "Permissions": [
                 {
-                    # "Principal": self.cfg.destination.role_arn,
                     "Principal": self.cfg.group_arn,
                     "Actions": [
-                        "quicksight:UpdateDataSourcePermissions",
+                        "quicksight:DescribeDataSource",
                         "quicksight:DescribeDataSourcePermissions",
                         "quicksight:PassDataSource",
-                        "quicksight:DescribeDataSource",
-                        "quicksight:DeleteDataSource",
                         "quicksight:UpdateDataSource",
+                        "quicksight:DeleteDataSource",
+                        "quicksight:UpdateDataSourcePermissions",
                     ],
-                }
+                },
+                {
+                    "Principal": qs_role_arn,
+                    "Actions": [
+                        "quicksight:DescribeDataSource",
+                        "quicksight:DescribeDataSourcePermissions",
+                        "quicksight:PassDataSource",
+                        "quicksight:UpdateDataSource",
+                        "quicksight:DeleteDataSource",
+                        "quicksight:UpdateDataSourcePermissions",
+                    ],
+                },
             ],
         }
+        return params

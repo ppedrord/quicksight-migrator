@@ -12,6 +12,21 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Helper público ─ torna-se visível para importação em todo o pacote
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def make_boto_session(profile: Optional[str] = None) -> "boto3.session.Session":  # NEW
+    """
+    Cria uma `boto3` `Session` usando o *AWS profile* informado (ou as variáveis
+    de ambiente/default, se `None`).
+
+    Isto padroniza a criação de sessões em todo o pacote.
+    """
+    return boto3.session.Session(profile_name=profile)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Data classes
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -55,14 +70,15 @@ class Config:
 
     # ── init helpers ──────────────────────────────────────────────
     def __post_init__(self) -> None:
-        self.session_factory = lambda p: boto3.session.Session(profile_name=p)
+        # usa o helper recém-criado
+        self.session_factory = make_boto_session
         self._base_session = self.session_factory(self.profile)
         self._assumed_creds: Optional[dict] = None
 
     # ── convenient alias used by older code ───────────────────────
     @property
     def destination(self):  # noqa: D401
-        """Alias retro‑compatível para `destination_account_id`."""
+        """Alias retro-compatível para `destination_account_id`."""
         return self.destination_account_id
 
     # ── boto3 helpers ─────────────────────────────────────────────
@@ -77,7 +93,7 @@ class Config:
                     RoleSessionName="qs-migration",
                 )
                 self._assumed_creds = resp["Credentials"]
-                logger.info("Assumed %s", self.destination_account_id.role_arn)
+                logger.debug("Assumed %s", self.destination_account_id.role_arn)
             except ClientError as e:
                 if e.response["Error"].get("Code") == "AccessDenied":
                     logger.warning("AssumeRole denied – fallback to profile creds")
@@ -107,4 +123,5 @@ class Config:
         return self._base_session.client("secretsmanager", region_name=self.region)
 
 
-__all__ = ["Account", "Config"]
+# exporta também o novo helper
+__all__ = ["Account", "Config", "make_boto_session"]
