@@ -93,7 +93,7 @@ class Config:
                     RoleSessionName="qs-migration",
                 )
                 self._assumed_creds = resp["Credentials"]
-                logger.debug("Assumed %s", self.destination_account_id.role_arn)
+                logger.info("Assumed %s", self.destination_account_id.role_arn)
             except ClientError as e:
                 if e.response["Error"].get("Code") == "AccessDenied":
                     logger.warning("AssumeRole denied – fallback to profile creds")

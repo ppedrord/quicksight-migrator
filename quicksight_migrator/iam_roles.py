@@ -122,7 +122,7 @@ class ServiceRolePatch:
             PolicyName=INLINE_POLICY_NAME,
             PolicyDocument=_inline(self.cfg.secret_arn),
         )
-        log.debug("Inline policy anexada a %s", SERVICE_ROLE_NAME)
+        log.info("Inline policy anexada a %s", SERVICE_ROLE_NAME)
 
     def cleanup(self):
         try:
@@ -144,11 +144,11 @@ class SecretsRolePatch:
     def ensure(self):
         try:
             self.iam.get_role(RoleName=SECRETS_ROLE_NAME)
-            log.debug("Role %s encontrada", SECRETS_ROLE_NAME)
+            log.info("Role %s encontrada", SECRETS_ROLE_NAME)
         except ClientError as e:
             if e.response["Error"]["Code"] != "NoSuchEntity":
                 raise
-            log.debug("Role %s não encontrada – criando", SECRETS_ROLE_NAME)
+            log.info("Role %s não encontrada – criando", SECRETS_ROLE_NAME)
             self._create()
 
         self._attach_policies()
@@ -181,10 +181,10 @@ class SecretsRolePatch:
         for label, fn, kwargs in steps:
             try:
                 fn(**kwargs)
-                log.debug("%s → ok", label)
+                log.info("%s → ok", label)
             except ClientError as e:
                 if e.response["Error"]["Code"] == "NoSuchEntity":
-                    log.debug("%s → já não existe", label)
+                    log.info("%s → já não existe", label)
                 else:
                     raise
 
@@ -233,7 +233,7 @@ class SecretsRolePatch:
             PolicyName=INLINE_POLICY_NAME,
             PolicyDocument=_inline(self.cfg.secret_arn),
         )
-        log.debug("Inline policy anexada a %s", SECRETS_ROLE_NAME)
+        log.info("Inline policy anexada a %s", SECRETS_ROLE_NAME)
 
 
 class MigrationRole:
@@ -254,11 +254,11 @@ class MigrationRole:
             role = self.iam.get_role(RoleName=self.name)["Role"]
             self._patch_trust(role)
             self._put_inline()
-            log.debug("Role %s já existia – patch aplicado", self.name)
+            log.info("Role %s já existia – patch aplicado", self.name)
         except ClientError as e:
             if e.response["Error"]["Code"] != "NoSuchEntity":
                 raise
-            log.debug("Role %s não encontrada – criando", self.name)
+            log.info("Role %s não encontrada – criando", self.name)
             self._create()
 
         # Garante que a role é reconhecida como usuário QuickSight
@@ -289,7 +289,7 @@ class MigrationRole:
         self.iam.get_waiter("role_exists").wait(RoleName=self.name)
         self._attach_policies()
         self._put_inline()
-        log.debug("Role %s criada", self.name)
+        log.info("Role %s criada", self.name)
 
     def _attach_policies(self):
         for pol in self.managed_policies:
@@ -304,27 +304,27 @@ class MigrationRole:
     # ---- inline policies ------------------------------------------------------
     def _put_inline(self) -> None:
         # Secrets access
-        log.debug("Anexando policy inline %s", INLINE_POLICY_NAME)
+        log.info("Anexando policy inline %s", INLINE_POLICY_NAME)
         self.iam.put_role_policy(
             RoleName=self.name,
             PolicyName=INLINE_POLICY_NAME,
             PolicyDocument=_inline(self.cfg.secret_arn),
         )
-        log.debug("Anexando policy inline %s", "AllowAssumeOriginRole")
+        log.info("Anexando policy inline %s", "AllowAssumeOriginRole")
         # AssumeRole na origem
         self.iam.put_role_policy(
             RoleName=self.name,
             PolicyName="AllowAssumeOriginRole",
             PolicyDocument=json.dumps(ASSUME_ORIGIN_POLICY),
         )
-        log.debug("Anexando policy inline %s", "QS-MigrationQuickSightReadWrite")
+        log.info("Anexando policy inline %s", "QS-MigrationQuickSightReadWrite")
         # Permissões QuickSight básicas
         self.iam.put_role_policy(
             RoleName=self.name,
             PolicyName="QS-MigrationQuickSightReadWrite",
             PolicyDocument=json.dumps(QS_READ_WRITE_POLICY),
         )
-        log.debug(
+        log.info(
             "Inline policies QS‑MigrationDest atualizadas (Secrets, AssumeOrigin, QS‑Read)"
         )
 
@@ -339,7 +339,7 @@ class MigrationRole:
                 Namespace="default",
                 UserName=self.name,
             )
-            log.debug("QuickSight user %s já existe", self.name)
+            log.info("QuickSight user %s já existe", self.name)
         except qs.exceptions.ResourceNotFoundException:  # type: ignore[attr-defined]
             email = f"noreply+{self.name.lower()}@example.com"
             try:
@@ -352,9 +352,9 @@ class MigrationRole:
                     UserRole="ADMIN",
                     Email=email,
                 )
-                log.debug("Role %s registrada como QuickSight ADMIN", self.name)
+                log.info("Role %s registrada como QuickSight ADMIN", self.name)
             except qs.exceptions.ResourceExistsException:  # type: ignore[attr-defined]
-                log.debug("QuickSight user %s já estava registrado", self.name)
+                log.info("QuickSight user %s já estava registrado", self.name)
             except ClientError as e:
                 log.warning("Falha ao registrar role no QuickSight: %s", e)
 
@@ -433,7 +433,7 @@ class OriginRoleSetup:
         self._ensure_trust()
         self._attach_policies()
         arn = f"arn:aws:iam::{self._account_id()}:" f"role/{self.ROLE_NAME}"
-        log.debug("Role %s pronta na conta origem", self.ROLE_NAME)
+        log.info("Role %s pronta na conta origem", self.ROLE_NAME)
         return arn
 
     # ---------------- internals -------------------------------------------------
@@ -458,7 +458,7 @@ class OriginRoleSetup:
             Description="QuickSight migration origin role (auto)",
         )
         self.iam.get_waiter("role_exists").wait(RoleName=self.ROLE_NAME)
-        log.debug("Role %s criada na conta origem", self.ROLE_NAME)
+        log.info("Role %s criada na conta origem", self.ROLE_NAME)
 
     # ---- trust policy ----------------------------------------------------------
     def _trust_doc(self) -> dict:
@@ -477,7 +477,7 @@ class OriginRoleSetup:
                 },
             ],
         }
-        log.debug(
+        log.info(
             "Trust policy de %s atualizada para permitir %s",
             self.ROLE_NAME,
             self.dest_role_arn,
@@ -494,7 +494,7 @@ class OriginRoleSetup:
                 RoleName=self.ROLE_NAME,
                 PolicyDocument=json.dumps(desired),
             )
-            log.debug(
+            log.info(
                 "Trust policy de %s atualizada para permitir %s",
                 self.ROLE_NAME,
                 self.dest_role_arn,
@@ -538,7 +538,7 @@ class OriginRoleSetup:
             PolicyName="QS-MigrationRead",
             PolicyDocument=json.dumps(readonly),
         )
-        log.debug("Inline policy QS-MigrationRead anexada a %s", self.ROLE_NAME)
+        log.info("Inline policy QS-MigrationRead anexada a %s", self.ROLE_NAME)
 
 
 # adicione à lista de exports do módulo

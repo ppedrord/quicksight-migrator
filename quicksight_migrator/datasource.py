@@ -48,27 +48,29 @@ class DataSourceManager:
                 AwsAccountId=self.cfg.destination.account_id,
                 DataSourceId=self.cfg.datasource_id,
             )["DataSource"]["Arn"]
-            logger.debug("DataSource already present → %s", self.arn)
+            logger.info("DataSource already present → %s", self.arn)
         except ClientError as exc:  # not found → create
             if exc.response["Error"].get("Code") != "ResourceNotFoundException":
                 # raise
                 logger.error(exc)
             try:
                 secret = self._secret()
-                logger.debug("Secret parsed")
+                logger.info("Secret parsed")
             except Exception as e:
                 logger.error(e)
             try:
                 params = self._build_params(secret)
-                logger.debug("DataSource params built")
+                logger.info("DataSource params built")
+                # logger.info(f"DataSource params: {json.dumps(params, indent=2)}")
             except Exception as e:
                 logger.error(e)
             try:
                 self.arn = self.qs.create_data_source(**params)["Arn"]
-                logger.debug("DataSource created → %s", self.arn)
+                logger.info("DataSource created → %s", self.arn)
             except Exception as e:
                 logger.error(e)
         return self.arn
+        
 
     def cleanup(self) -> None:
         """Delete the Data Source if it exists (best‑effort)."""
@@ -77,7 +79,7 @@ class DataSourceManager:
                 AwsAccountId=self.cfg.destination.account_id,
                 DataSourceId=self.cfg.datasource_id,
             )
-            logger.debug("DataSource %s removed", self.cfg.datasource_id)
+            logger.info("DataSource %s removed", self.cfg.datasource_id)
         except ClientError as exc:
             if exc.response["Error"].get("Code") != "ResourceNotFoundException":
                 raise

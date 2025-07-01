@@ -136,7 +136,7 @@ def create_destination_datasource(
         group_arn=group_arn,
     )
     artefacts.save(export_path)
-    log.debug("Artefacts salvos em %s", export_path)
+    log.info("Artefacts salvos em %s", export_path)
     return artefacts
 
 
@@ -163,7 +163,7 @@ def cleanup_destination_datasource(
     ServiceRolePatch(cfg).cleanup()
     SecretsRolePatch(cfg).cleanup()
     MigrationRole(cfg).cleanup()
-    log.debug("Stage 0/1 limpo com sucesso")
+    log.info("Stage 0/1 limpo com sucesso")
 
 
 # ───────────────────────── Stage 2 ─────────────────────────
@@ -184,6 +184,8 @@ def replicate_datasets(
     save_definitions: bool = False,
     group_arn: Optional[str] = None,
     defs_output_dir: str | Path = "artefacts/datasets",
+    use_definitions: bool = False,
+    defs_input_dir: Optional[str | Path] = None,
 ) -> List[str]:
     """Replica todos os DataSets *DIRECT_QUERY* que utilizam **source_ds_arn**.
 
@@ -244,7 +246,7 @@ def replicate_datasets(
         ],
     }
     dest_role_name = dest_role_arn.split("/")[-1]
-    log.debug("Anexando policy inline %s", dest_role_name)
+    log.info("Anexando policy inline %s", dest_role_name)
     try:
         iam_dest.put_role_policy(
             RoleName=dest_role_name,
@@ -288,9 +290,11 @@ def replicate_datasets(
         target_ds_arn=dest_ds_arn,
         group_arn=group_arn,
         save_defs=save_definitions,
-        defs_dir=defs_output_dir,
+        defs_output_dir=defs_output_dir,
+        use_defs=use_definitions,
+        defs_input_dir=defs_input_dir,
     )
-    log.debug("DataSets replicados: %s", json.dumps(datasets_arns, indent=2))
+    log.info("DataSets replicados: %s", json.dumps(datasets_arns, indent=2))
 
     # ------------------------------------------------------------------
     # Persist artefacts
@@ -300,7 +304,7 @@ def replicate_datasets(
         if save_definitions:
             arts.datasets_defs_path = str(defs_output_dir)
         arts.save(artefacts_path)
-        log.debug("Artefacts atualizados em %s", artefacts_path)
+        log.info("Artefacts atualizados em %s", artefacts_path)
 
     return datasets_arns
 
@@ -317,7 +321,7 @@ def cleanup_datasets(
 
     arts = Artefacts.load(artefacts_path)
     if not arts or not arts.datasets_arns:
-        log.debug("Nenhum DataSet registrado em artefacts – nada a fazer")
+        log.info("Nenhum DataSet registrado em artefacts – nada a fazer")
         return
 
     # ---------------- QuickSight client ----------------
@@ -338,7 +342,7 @@ def cleanup_datasets(
         try:
             qs.delete_data_set(AwsAccountId=account_id, DataSetId=ds_id)
             removed.append(ds_id)
-            log.debug("DataSet %s removido", ds_id)
+            log.info("DataSet %s removido", ds_id)
         except Exception as e:
             errors.append((ds_id, str(e)))
             log.error("Falha ao remover %s: %s", ds_id, e)
@@ -360,7 +364,7 @@ def cleanup_datasets(
 
     # ---------------- resumo ---------------------------
     if removed:
-        log.debug("Cleanup Stage 2 concluído – %d DataSets removidos", len(removed))
+        log.info("Cleanup Stage 2 concluído – %d DataSets removidos", len(removed))
     if errors:
         log.warning("Alguns DataSets não puderam ser removidos: %s", errors)
 

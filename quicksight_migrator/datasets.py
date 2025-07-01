@@ -66,7 +66,9 @@ class DataSetsManager:
         target_ds_arn: str,
         group_arn: str,
         save_defs: Optional[bool] = False,
-        defs_dir: Optional[str | Path] = None,
+        use_defs: Optional[bool] = False,
+        defs_input_dir: Optional[str | Path] = None,
+        defs_output_dir: Optional[str | Path] = None,
     ) -> List[str]:
         """
         Replica **todos** os Data Sets *DIRECT_QUERY* da conta origem, redirecionando
@@ -74,14 +76,14 @@ class DataSetsManager:
 
         Retorna **uma lista** contendo os ARNs dos Data Sets replicados com sucesso.
         """
-        log.debug("Listando Data Sets na conta de origem")
+        log.info("Listando Data Sets na conta de origem")
         paginator = qs_src.get_paginator("list_data_sets")
         dest_map: Dict[str, str] = {}
         total = 0
-
-        for page in paginator.paginate(AwsAccountId=src_account_id):
-            for summary in page.get("DataSetSummaries", []):
-                ds_id = summary["DataSetId"]
+        if not use_defs:
+            for page in paginator.paginate(AwsAccountId=src_account_id):
+                for summary in page.get("DataSetSummaries", []):
+                    ds_id = summary["DataSetId"]
                 total += 1
                 try:
                     describe_resp = qs_src.describe_data_set(
@@ -96,9 +98,7 @@ class DataSetsManager:
                         out.write_text(json.dumps(describe_resp, indent=2, default=str))
 
                     if ds["ImportMode"] != "DIRECT_QUERY":
-                        log.debug(
-                            "%s ignorado (ImportMode=%s)", ds_id, ds["ImportMode"]
-                        )
+                        log.info("%s ignorado (ImportMode=%s)", ds_id, ds["ImportMode"])
                         continue
 
                     dest_arn = self._replicate_single(
@@ -109,8 +109,24 @@ class DataSetsManager:
                 except ClientError as e:
                     log.warning("Falha ao processar %s: %s", ds_id, e)
                     continue
+        else:
+            for ds_id in Path(defs_input_dir).glob("*.json"):
+                try:
+                    with open(ds_id, "r") as f:
+                        ds = json.load(f)
+                        ds_id = ds.get("DataSet").get("DataSetId")
+                        log.info("Lendo %s", ds_id)
+                        log.info("Replicando %s", ds_id)
+                        dest_arn = self._replicate_single(
+                            ds, qs_dst, dst_account_id, target_ds_arn, group_arn, ds_id=ds_id
+                        )
+                        if dest_arn:
+                            dest_map[ds_id] = dest_arn
+                except ClientError as e:
+                    log.warning("Falha ao processar %s: %s", ds_id, e)
+                    continue
 
-        log.debug("Encontrados %d Data Sets; replicados %d", total, len(dest_map))
+        log.info("Encontrados %d Data Sets; replicados %d", total, len(dest_map))
         replicated_arns = list(dest_map.values())
         return replicated_arns
 
@@ -123,28 +139,31 @@ class DataSetsManager:
         dst_account_id: str,
         target_ds_arn: str,
         group_arn: str,
+        ds_id: Optional[str] = None,
     ) -> str | None:
         """Cria no destino um clone de *src_ds* apontando para *target_ds_arn*."""
-        ds_id = src_ds["DataSetId"]
+        ds_id = ds_id or src_ds.get("DataSetId")
 
         # Se já existir no destino, devolve ARN existente
         try:
             dst_resp = qs_dst.describe_data_set(
                 AwsAccountId=dst_account_id, DataSetId=ds_id
             )
-            log.debug("%s já existe no destino → %s", ds_id, dst_resp["DataSet"]["Arn"])
-            return dst_resp["DataSet"]["Arn"]
+            log.info("%s já existe no destino → %s", ds_id, dst_resp.get("DataSet").get("Arn"))
+            return dst_resp.get("DataSet").get("Arn")
         except ClientError as e:
             if e.response["Error"]["Code"] != "ResourceNotFoundException":
                 raise
 
+        log.info("Source: %s", src_ds)
+
         payload = {
             "AwsAccountId": dst_account_id,
             "DataSetId": ds_id,
-            "Name": src_ds["Name"],
+            "Name": src_ds.get("DataSet").get("Name"),
             "ImportMode": "DIRECT_QUERY",
-            "PhysicalTableMap": {},
-            "LogicalTableMap": src_ds.get("LogicalTableMap", {}),
+            "PhysicalTableMap": src_ds.get("DataSet").get("PhysicalTableMap", {}),
+            "LogicalTableMap": src_ds.get("DataSet").get("LogicalTableMap", {}),
             "Permissions": [
                 {
                     "Principal": group_arn,
@@ -164,7 +183,7 @@ class DataSetsManager:
             ],
         }
 
-        # log.debug(f"Payload: \n{json.dumps(payload, indent=2, default=str)}")
+        # log.info(f"Payload: \n{json.dumps(payload, indent=2, default=str)}")
 
         # Substitui DataSourceArn em cada PhysicalTable
         for tbl_id, tbl in src_ds.get("PhysicalTableMap", {}).items():
@@ -195,7 +214,7 @@ class DataSetsManager:
         try:
             resp = qs_dst.create_data_set(**payload)
             dst_arn = resp["Arn"]
-            log.debug("%s replicado → %s", ds_id, dst_arn)
+            log.info("%s replicado → %s", ds_id, dst_arn)
             # Espera curta para propagação
             time.sleep(5)
             return dst_arn
